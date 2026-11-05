@@ -172,3 +172,17 @@ hr.sep { border: none; border-top: 1px solid var(--line); margin: 16px -18px; }
   .fabs { bottom: 40px !important; }
   .hint { top: 90px; }
 }
+
+/* premium */
+.logo { cursor: pointer; }
+.tl.lock { color: var(--text-2); padding: 0 6px; }
+.tl.lock .ms { font-size: 16px; }
+.paywall { background: linear-gradient(135deg, #e6f4ea, #e8f0fe); border-radius: 18px; padding: 16px; margin: 10px 0 4px; }
+.pw-title { display: flex; align-items: center; gap: 8px; font-weight: 600; font-size: 17px; }
+.pw-title .ms { color: var(--green); }
+.paywall ul { margin: 8px 0 12px; padding-left: 22px; color: var(--text-2); font-size: 14px; }
+.pill.wide { width: 100%; justify-content: center; height: 46px; font-size: 15px; }
+.brand { display: flex; align-items: center; gap: 14px; margin-top: 4px; }
+.brand img { width: 52px; height: 52px; border-radius: 14px; }
+.alert.ok { background: var(--green-soft); color: var(--green); }
+.alert.ok .ms { color: var(--green); }

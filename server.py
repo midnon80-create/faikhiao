@@ -15,6 +15,7 @@ Run:  python server.py            (http://localhost:8765)
 """
 import json, math, os, sqlite3, sys, threading, time
 import floods_routes as fr
+import premium
 from http.server import ThreadingHTTPServer, SimpleHTTPRequestHandler
 
 ROOT = os.path.dirname(os.path.abspath(__file__))
@@ -38,6 +39,7 @@ db = sqlite3.connect(DB_PATH, check_same_thread=False)
 db.execute('CREATE TABLE IF NOT EXISTS ev (node INTEGER, dir INTEGER, kind TEXT, t REAL, src TEXT)')
 db.execute('CREATE INDEX IF NOT EXISTS ev_nd ON ev(node, dir, t)')
 fr.init(db)
+premium.init(db)
 try:   # signal positions, used to count traffic lights along a route
     SIGNALS = [(e['lat'], e['lon']) for e in json.load(open(os.path.join(ROOT, 'bangkok.json'), encoding='utf-8'))['el'] if e['t'] == 'n']
 except Exception:
@@ -170,7 +172,7 @@ def estimates_for(nodes):
 
 # ---------------------------------------------------------------- http
 _rate = {}      # ip -> [window_start, count]
-PUBLIC = {'/', '/index.html', '/app.css', '/app.js', '/bangkok.json', '/favicon.svg', '/manifest.json'}
+PUBLIC = {'/', '/index.html', '/app.css', '/app.js', '/bangkok.json', '/favicon.svg', '/manifest.json', '/privacy.html', '/icon-512.png', '/icon-192.png', '/icon-maskable-512.png'}
 
 class Handler(SimpleHTTPRequestHandler):
     def __init__(self, *a, **kw):
@@ -204,6 +206,11 @@ class Handler(SimpleHTTPRequestHandler):
                 return self._json(200, fr.active_floods(db))
         if self.path == '/healthz':
             return self._json(200, {'ok': True})
+        if self.path == '/.well-known/assetlinks.json':
+            return self._json(200, premium.assetlinks())
+        if self.path.startswith('/api/premium/status'):
+            with db_lock:
+                return self._json(200, {'premium': premium.session_valid(db, self.headers.get('X-Session')), 'dev': premium.DEV})
         # serve only the app's own files, nothing else from the folder
         if self.path.split('?')[0] not in PUBLIC:
             return self.send_error(404)
@@ -228,6 +235,10 @@ class Handler(SimpleHTTPRequestHandler):
             return self._events(data)
         if self.path == '/api/estimates':
             nodes = [int(x) for x in (data or {}).get('nodes', [])[:600] if str(x).isdigit()]
+            with db_lock:
+                ok = premium.session_valid(db, self.headers.get('X-Session'))
+            if not ok:   # the countdown is the paid feature: no timings without an active subscription
+                return self._json(200, {'locked': True})
             return self._json(200, estimates_for(nodes) if nodes else {})
         try:
             if self.path == '/api/floods':
@@ -238,6 +249,14 @@ class Handler(SimpleHTTPRequestHandler):
                     return self._json(429, {'error': 'rate limit'})
                 with db_lock:
                     return self._json(200, {'id': fr.report_flood(db, lat, lon, lv)})
+            if self.path == '/api/premium/verify':
+                if not self._allow(60):
+                    return self._json(429, {'error': 'rate limit'})
+                try:
+                    with db_lock:
+                        return self._json(200, premium.verify(db, str(data['purchaseToken']), str(data['sku'])))
+                except ValueError as e:
+                    return self._json(402, {'error': str(e)})
             if self.path == '/api/floods/vote':
                 if not self._allow(20):
                     return self._json(429, {'error': 'rate limit'})

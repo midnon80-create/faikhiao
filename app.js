@@ -65,11 +65,100 @@ function toast(msg) {
   clearTimeout(toastTimer); toastTimer = setTimeout(() => t.hidden = true, 3200);
 }
 async function api(path, body) {
-  const r = await fetch(path, body ? { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) } : {});
+  const headers = { 'Content-Type': 'application/json' };
+  if (prem.session) headers['X-Session'] = prem.session;
+  const r = await fetch(path, body ? { method: 'POST', headers, body: JSON.stringify(body) } : { headers });
   const d = await r.json();
   if (!r.ok) throw new Error(d.error || r.status);
   return d;
 }
+
+// ============================================================ premium subscription (Google Play Billing)
+const PLAY = 'https://play.google.com/billing', SKU = 'faikhiao_monthly';
+const PLAY_URL = 'https://play.google.com/store/apps/details?id=com.faikhiao.app';
+const prem = { session: localStorage.getItem('premSession') || '', expires: +(localStorage.getItem('premExpires') || 0), price: '', dev: false };
+const isPremium = () => !!prem.session && prem.expires * 1000 > Date.now();
+async function playService() {
+  if (!('getDigitalGoodsService' in window)) return null;          // only inside the Android app
+  try { return await window.getDigitalGoodsService(PLAY); } catch { return null; }
+}
+async function verifyPurchase(purchaseToken, sku) {
+  const d = await api('/api/premium/verify', { purchaseToken, sku });
+  prem.session = d.session; prem.expires = d.expires;
+  localStorage.setItem('premSession', d.session); localStorage.setItem('premExpires', d.expires);
+  onPremiumChange();
+}
+async function restorePurchases(quiet) {
+  const svc = await playService();
+  if (!svc) return false;
+  try {
+    for (const p of await svc.listPurchases()) if (p.itemId === SKU) { await verifyPurchase(p.purchaseToken, p.itemId); return true; }
+  } catch (e) { if (!quiet) toast('กู้คืนไม่สำเร็จ: ' + e.message); }
+  if (!quiet) toast('ไม่พบการสมัครสมาชิกในบัญชี Google Play นี้');
+  return false;
+}
+async function subscribe() {
+  const svc = await playService();
+  if (svc) {
+    try {
+      const req = new PaymentRequest([{ supportedMethods: PLAY, data: { sku: SKU } }],
+        { total: { label: 'ไฟเขียว พรีเมียม', amount: { currency: 'THB', value: '0' } } });
+      const res = await req.show();
+      await verifyPurchase(res.details.purchaseToken, SKU);
+      await res.complete('success');
+      toast('สมัครสำเร็จ! ตอนนี้เห็นวินาทีไฟแดง/เขียวทุกแยกแล้ว');
+    } catch (e) { if (e.name !== 'AbortError') toast('สมัครไม่สำเร็จ: ' + e.message); }
+    return;
+  }
+  if (prem.dev) {                                                   // test server only
+    try { await verifyPurchase('dev-' + Math.random().toString(36).slice(2), SKU); toast('เปิดพรีเมียมแล้ว (โหมดทดสอบ)'); }
+    catch (e) { toast(e.message); }
+    return;
+  }
+  openSheet('premium-web', `
+    <button class="icon-btn close-x" data-close><span class="ms">close</span></button>
+    <h2>สมัครผ่านแอปไฟเขียว</h2>
+    <div class="sub">การสมัครสมาชิกทำผ่าน Google Play ในแอปไฟเขียวบนมือถือ Android</div>
+    <div class="row"><a class="pill primary" href="${PLAY_URL}" target="_blank" style="text-decoration:none"><span class="ms">shop</span>เปิดใน Google Play</a></div>`, 'peek');
+}
+function onPremiumChange() {
+  document.body.classList.toggle('premium', isPremium());
+  est.clear(); for (const mk of markers.values()) mk.last = '';
+  refreshEstimates(); tick();
+  if (sheetKind === 'light') openLight(lightId);
+  if (sheetKind === 'premium') openPremium();
+}
+function paywallHtml() {
+  return `<div class="paywall">
+    <div class="pw-title"><span class="ms fill">timer</span>รู้ก่อนว่าไฟแดงเหลืออีกกี่วินาที</div>
+    <ul><li>วินาทีไฟแดง/ไฟเขียวแบบเรียลไทม์ทุกแยก</li><li>คำนวณจากรถจริงของผู้ใช้ แม่นขึ้นทุกวัน</li><li>ยกเลิกได้ทุกเมื่อใน Google Play</li></ul>
+    <button class="pill primary wide" data-sub><span class="ms fill">workspace_premium</span>ทดลองฟรี 7 วัน${prem.price ? ' แล้ว ' + prem.price + '/เดือน' : ''}</button>
+  </div>`;
+}
+function openPremium() {
+  const on = isPremium();
+  openSheet('premium', `
+    <button class="icon-btn close-x" data-close><span class="ms">close</span></button>
+    <div class="brand"><img src="icon-192.png" alt=""><div><h2>ไฟเขียว พรีเมียม</h2>
+      <div class="sub">${on ? `ใช้งานอยู่ · ถึง ${new Date(prem.expires * 1000).toLocaleDateString('th-TH')}` : 'ยังไม่ได้สมัคร'}</div></div></div>
+    ${on ? '<div class="alert ok"><span class="ms fill">check_circle</span><div>คุณเห็นวินาทีไฟจราจรทุกแยกแล้ว ขอบคุณที่สนับสนุน!</div></div>' : paywallHtml()}
+    <div class="row">
+      <button class="pill" id="restoreBtn"><span class="ms">restore</span>กู้คืนการสมัคร</button>
+      <a class="pill" href="privacy.html" target="_blank" style="text-decoration:none"><span class="ms">policy</span>ความเป็นส่วนตัว</a>
+    </div>`, 'peek');
+  $('#restoreBtn').onclick = () => restorePurchases(false);
+}
+document.getElementById('sheetBody').addEventListener('click', e => { if (e.target.closest('[data-sub]')) subscribe(); });
+document.querySelector('.logo').addEventListener('click', openPremium);
+(async () => {
+  try { const s = await api('/api/premium/status'); prem.dev = s.dev; if (prem.session && !s.premium) { prem.expires = 0; } } catch {}
+  const svc = await playService();
+  if (svc) {
+    try { const [d] = await svc.getDetails([SKU]); if (d?.price) prem.price = new Intl.NumberFormat('th-TH', { style: 'currency', currency: d.price.currency, maximumFractionDigits: 0 }).format(+d.price.value); } catch {}
+    await restorePurchases(true);                                    // renewals: re-check on every start
+  }
+  onPremiumChange();
+})();
 
 // ============================================================ bottom sheet
 const sheet = $('#sheet'), sheetBody = $('#sheetBody');
@@ -215,7 +304,15 @@ function syncLightMarkers() {
 function tick() {
   const t = nowS();
   for (const [id, mk] of markers) {
+    if (!isPremium()) {                       // free: show where the lights are, the seconds are premium
+      if (mk.last !== 'lock') { mk.last = 'lock'; mk.el.className = 'tl lock'; mk.el.innerHTML = '<span class="ms fill">traffic</span>'; }
+      continue;
+    }
     const p = planFor(id), s = stateOf(p, t), key = s.c + s.left + p.guess;
+    if (p.guess) {                            // no real reports for this light yet: never show a made-up number
+      if (mk.last !== 'nodata') { mk.last = 'nodata'; mk.el.className = 'tl lock'; mk.el.innerHTML = '<span class="ms">traffic</span>'; }
+      continue;
+    }
     if (key === mk.last) continue;
     mk.last = key;
     mk.el.className = `tl ${s.c} ${p.guess ? 'guess' : 'live'}`;
@@ -226,11 +323,12 @@ function tick() {
 setInterval(tick, 1000);
 let estBusy = false;
 async function refreshEstimates() {
-  if (estBusy || !markers.size) return;
+  if (estBusy || !markers.size || !isPremium()) return;
   estBusy = true;
   try {
     const d = await api('/api/estimates', { nodes: [...markers.keys()] });
     est.clear();
+    if (d.locked) { if (isPremium()) { prem.expires = 0; onPremiumChange(); } estBusy = false; return; }
     for (const [id, v] of Object.entries(d)) est.set(+id, v);
     for (const mk of markers.values()) mk.last = '';
     tick();
@@ -242,11 +340,12 @@ setInterval(refreshEstimates, 20000);
 let lightId = null;
 function openLight(id) {
   lightId = id;
-  const e = est.get(id) || {}, rows = Object.entries(e);
+  const e = est.get(id) || {}, rows = Object.entries(e), locked = !isPremium();
   openSheet('light', `
     <button class="icon-btn close-x" data-close><span class="ms">close</span></button>
     <div class="muted">สัญญาณไฟจราจร</div>
-    <div class="light-hero">
+    ${locked ? paywallHtml() : ''}
+    <div class="light-hero" ${locked ? 'hidden' : ''}>
       <div class="lamp"><i class="r"></i><i class="y"></i><i class="g"></i></div>
       <div><div class="state-name" id="lsName"></div><div class="count" id="lsCount"></div><div id="lsBadge" style="margin-top:6px"></div></div>
     </div>
@@ -271,9 +370,16 @@ function openLight(id) {
   updateLightSheet();
 }
 function updateLightSheet() {
-  if (lightId == null || !$('#lsCount')) return;
+  if (lightId == null || !$('#lsCount') || !isPremium()) return;
   const p = planFor(lightId), s = stateOf(p, nowS());
   sheetBody.querySelectorAll('.lamp i').forEach(i => i.classList.toggle('on', i.classList.contains(s.c)));
+  if (p.guess) {
+    sheetBody.querySelectorAll('.lamp i').forEach(i => i.classList.remove('on'));
+    $('#lsName').textContent = 'ยังไม่มีข้อมูลแยกนี้'; $('#lsName').style.color = 'var(--text-2)';
+    $('#lsCount').innerHTML = '<small style="margin:0">เปิด "ช่วยวัดไฟ" ตอนขับผ่าน หรือกดบอกจังหวะไฟด้านล่าง</small>';
+    $('#lsBadge').innerHTML = '<span class="badge guess"><span class="ms">hourglass_empty</span>รอรถผู้ใช้ผ่านแยกนี้</span>';
+    return;
+  }
   $('#lsName').textContent = { g: 'ไฟเขียว', y: 'ไฟเหลือง', r: 'ไฟแดง' }[s.c] + ' อีก';
   $('#lsName').style.color = { g: 'var(--green)', y: '#b06000', r: 'var(--red)' }[s.c];
   $('#lsCount').innerHTML = `${s.left}<small>วินาที</small>`;
