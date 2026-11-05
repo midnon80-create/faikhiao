@@ -1,0 +1,19 @@
+# Render Blueprint: Dashboard -> New -> Blueprint -> pick this repository.
+services:
+  - type: web
+    name: faikhiao
+    runtime: python
+    plan: free            # free = sleeps when idle and loses reports on restart.
+                          # For real users switch to "starter" and uncomment the disk below.
+    buildCommand: pip install -r requirements.txt
+    startCommand: python server.py
+    healthCheckPath: /healthz
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.12.7
+      - key: DATA_DIR
+        value: /var/data
+    # disk:
+    #   name: data
+    #   mountPath: /var/data
+    #   sizeGB: 1
