@@ -19,7 +19,12 @@ from http.server import ThreadingHTTPServer, SimpleHTTPRequestHandler
 
 ROOT = os.path.dirname(os.path.abspath(__file__))
 DATA_DIR = os.environ.get('DATA_DIR', ROOT)          # point at a persistent disk in the cloud
-os.makedirs(DATA_DIR, exist_ok=True)
+try:
+    os.makedirs(DATA_DIR, exist_ok=True)
+    open(os.path.join(DATA_DIR, '.write_test'), 'w').close()
+except OSError:                                      # no disk attached (e.g. free plan): keep data next to the app
+    print(f'DATA_DIR {DATA_DIR} not writable, using {ROOT}', flush=True)
+    DATA_DIR = ROOT
 DB_PATH = os.path.join(DATA_DIR, 'signals.db')
 PORT = int(os.environ.get('PORT', 8765))
 

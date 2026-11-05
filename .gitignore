@@ -1,3 +1,4 @@
 signals.db
 __pycache__/
 tools/*.bak
+.write_test
